@@ -1,0 +1,1488 @@
+<!DOCTYPE html><html lang="en"><head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+  <title>Live TV</title>
+
+  <!-- HLS.js -->
+  <script src="../cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js"></script>
+
+  <!-- Firebase Compat -->
+  <script src="../www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="../www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="../fonts.googleapis.com/css2/family=Inter:wght@400;500;600;700&amp;display=swap.css" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --accent: #e11d48;
+      --accent-dark: #be123c;
+      --accent-glow: rgba(225,29,72,0.25);
+      --bg: #07080f;
+      --surface: #0e1018;
+      --surface-2: rgba(255,255,255,0.04);
+      --border: rgba(255,255,255,0.07);
+      --border-hover: rgba(255,255,255,0.13);
+      --text: #f1f5f9;
+      --text-2: #94a3b8;
+      --text-3: #475569;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── Layout ── */
+    #app {
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Desktop sidebar */
+    #sidebar {
+      width: 272px;
+      min-width: 272px;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: width 0.35s cubic-bezier(0.4,0,0.2,1), min-width 0.35s cubic-bezier(0.4,0,0.2,1), border 0.35s ease;
+    }
+
+    #sidebar.collapsed { width: 0; min-width: 0; border-left: none; }
+
+    #sidebar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      background: linear-gradient(180deg, rgba(225,29,72,0.06) 0%, transparent 100%);
+    }
+
+    #sidebar-title { font-size: 13px; font-weight: 700; letter-spacing: 0.02em; }
+
+    #channel-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    /* Main area */
+    #main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-width: 0;
+      background: #000;
+    }
+
+    /* Top bar */
+    #topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: rgba(7,8,15,0.85);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      gap: 8px;
+    }
+
+    #now-playing {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      justify-content: center;
+      min-width: 0;
+    }
+
+    #now-playing-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+      animation: pulse 2s infinite;
+      box-shadow: 0 0 6px var(--accent);
+    }
+
+    #now-playing-name {
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      letter-spacing: 0.01em;
+    }
+
+    #now-playing-cat {
+      font-size: 11px;
+      color: var(--text-2);
+      white-space: nowrap;
+      font-weight: 500;
+    }
+
+    /* Player */
+    #player-wrap {
+      flex: 1;
+      background: #000;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #player-wrap video,
+    #player-wrap iframe { width: 100%; height: 100%; display: block; border: none; }
+
+    /* Bottom bar */
+    #bottombar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: rgba(7,8,15,0.85);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    /* Channel item */
+    .ch-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.18s ease;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text-2);
+      text-align: left;
+      width: 100%;
+    }
+
+    .ch-item:hover {
+      background: var(--surface-2);
+      border-color: var(--border);
+      color: var(--text);
+    }
+
+    .ch-item.active {
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
+      border-color: transparent;
+      color: #fff;
+      box-shadow: 0 4px 20px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,0.12);
+    }
+
+    .ch-logo { font-size: 20px; flex-shrink: 0; width: 34px; text-align: center; }
+
+    .ch-logo img {
+      width: 34px; height: 34px;
+      border-radius: 9px;
+      object-fit: cover;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+
+    .ch-info { flex: 1; min-width: 0; }
+
+    .ch-name {
+      font-size: 12.5px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      letter-spacing: 0.01em;
+    }
+
+    .ch-cat {
+      font-size: 10.5px;
+      color: var(--text-3);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-weight: 500;
+    }
+
+    .ch-item.active .ch-cat { color: rgba(255,255,255,0.65); }
+
+    .ch-cat-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+
+    .ch-flag-img {
+      width: 17px; height: 11px;
+      border-radius: 2px;
+      object-fit: cover;
+      display: inline-block;
+      vertical-align: middle;
+      flex-shrink: 0;
+    }
+
+    /* Flag upload slots */
+    .flag-slots { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-start; }
+
+    .flag-slot-group { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+
+    .flag-slot {
+      position: relative;
+      width: 48px; height: 32px;
+      border-radius: 7px;
+      border: 1px dashed var(--border-hover);
+      background: var(--surface-2);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; overflow: hidden;
+      transition: border-color 0.15s;
+      flex-shrink: 0;
+    }
+
+    .flag-slot:hover { border-color: var(--text-2); }
+    .flag-slot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .flag-slot .slot-add { font-size: 16px; color: var(--text-3); line-height: 1; pointer-events: none; }
+
+    .flag-slot .slot-remove {
+      position: absolute; top: 1px; right: 1px;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: rgba(0,0,0,0.75); color: #fff;
+      font-size: 9px; display: flex; align-items: center; justify-content: center;
+      cursor: pointer; line-height: 1; z-index: 2;
+    }
+
+    .flag-slot .slot-spinner {
+      position: absolute; inset: 0;
+      background: rgba(14,16,24,0.85);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; color: var(--text-2);
+    }
+
+    .flag-label-inputs { display: flex; flex-direction: column; gap: 3px; width: 60px; }
+
+    .flag-label-input {
+      width: 100%; background: var(--surface-2);
+      border: 1px solid var(--border); border-radius: 5px;
+      padding: 3px 5px; font-size: 9px; color: var(--text);
+      outline: none; text-align: center; font-family: inherit;
+    }
+
+    .flag-label-input:focus { border-color: var(--accent); }
+    .flag-label-input::placeholder { color: var(--text-3); }
+    .flag-hint { font-size: 11px; color: var(--text-3); margin-top: 4px; }
+    .ch-flag-wrap { display: inline-flex; align-items: center; cursor: pointer; }
+
+    /* Tooltip */
+    #flag-tooltip {
+      position: fixed; z-index: 99999;
+      background: #131520;
+      border: 1px solid var(--border-hover);
+      border-radius: 10px; padding: 8px 12px;
+      min-width: 140px; max-width: 240px; width: max-content;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+      pointer-events: none; opacity: 0; transition: opacity 0.15s;
+    }
+
+    #flag-tooltip.visible { opacity: 1; }
+
+    #flag-tooltip::after {
+      content: ''; position: absolute; top: 100%;
+      left: var(--arrow-left, 50%); transform: translateX(-50%);
+      border: 5px solid transparent;
+      border-top-color: var(--border-hover);
+    }
+
+    .tip-en { font-size: 12px; font-weight: 700; color: var(--text); white-space: nowrap; display: block; }
+    .tip-bn { font-size: 11px; font-weight: 400; color: var(--text-2); margin-top: 3px; white-space: normal; word-break: break-word; display: block; }
+
+    /* Live badge */
+    .live-badge {
+      font-size: 9.5px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 20px;
+      background: rgba(225,29,72,0.12);
+      color: #fb7185;
+      border: 1px solid rgba(225,29,72,0.2);
+      flex-shrink: 0;
+      align-self: center;
+      letter-spacing: 0.04em;
+    }
+
+    .active-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #4ade80; flex-shrink: 0;
+      animation: pulse 2s infinite;
+      box-shadow: 0 0 5px rgba(74,222,128,0.6);
+    }
+
+    /* Buttons */
+    .nav-btn {
+      display: flex; align-items: center; gap: 7px;
+      padding: 8px 18px;
+      border-radius: 10px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 12.5px; font-weight: 600;
+      cursor: pointer;
+      transition: all 0.18s ease;
+      letter-spacing: 0.01em;
+      font-family: inherit;
+    }
+
+    .nav-btn:hover {
+      background: rgba(255,255,255,0.08);
+      border-color: var(--border-hover);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+
+    .nav-btn:active { transform: translateY(0); }
+
+    .icon-btn {
+      padding: 7px; border-radius: 8px;
+      background: transparent; border: none;
+      color: var(--text-2); cursor: pointer;
+      transition: all 0.15s;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .icon-btn:hover { background: var(--surface-2); color: var(--text); }
+
+    /* Loading */
+    #loading {
+      display: flex; align-items: center; justify-content: center;
+      height: 80px; color: var(--text-3); font-size: 13px;
+    }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed; inset: 0; z-index: 50;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      padding: 16px;
+    }
+
+    .modal-box {
+      background: #0e1018;
+      border-radius: 20px;
+      border: 1px solid var(--border-hover);
+      box-shadow: 0 32px 64px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03);
+      width: 100%; max-width: 400px; max-height: 90vh; overflow-y: auto;
+    }
+
+    .modal-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 20px 20px 14px;
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0;
+      background: #0e1018;
+      border-radius: 20px 20px 0 0;
+    }
+
+    .modal-title { font-size: 14.5px; font-weight: 700; letter-spacing: 0.01em; }
+    .modal-body { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+
+    label { font-size: 11.5px; color: var(--text-2); display: block; margin-bottom: 5px; font-weight: 500; letter-spacing: 0.02em; }
+
+    input, textarea, select {
+      width: 100%;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-size: 13px; color: var(--text);
+      outline: none; transition: border 0.15s, box-shadow 0.15s;
+      font-family: inherit;
+    }
+
+    input:focus, textarea:focus, select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    input::placeholder, textarea::placeholder { color: var(--text-3); }
+    textarea { resize: none; }
+
+    .type-toggle {
+      display: flex; gap: 6px;
+      background: rgba(255,255,255,0.03);
+      padding: 4px; border-radius: 12px;
+      border: 1px solid var(--border);
+    }
+
+    .type-btn {
+      flex: 1; padding: 8px; border-radius: 9px; border: none;
+      font-size: 12.5px; font-weight: 600; cursor: pointer;
+      transition: all 0.18s; color: var(--text-3);
+      background: transparent; font-family: inherit;
+    }
+
+    .type-btn.active {
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
+      color: #fff;
+      box-shadow: 0 2px 10px var(--accent-glow);
+    }
+
+    .btn-red {
+      width: 100%;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
+      color: #fff; border: none; border-radius: 12px;
+      padding: 12px; font-size: 13.5px; font-weight: 700;
+      cursor: pointer; transition: all 0.18s;
+      box-shadow: 0 4px 16px var(--accent-glow);
+      font-family: inherit; letter-spacing: 0.01em;
+    }
+
+    .btn-red:hover { transform: translateY(-1px); box-shadow: 0 6px 20px var(--accent-glow); filter: brightness(1.05); }
+    .btn-red:active { transform: translateY(0); }
+    .btn-red:disabled { opacity: 0.45; cursor: not-allowed; transform: none; box-shadow: none; }
+
+    .btn-danger {
+      width: 100%; background: transparent; color: #fb7185;
+      border: none; border-radius: 12px; padding: 10px;
+      font-size: 13px; font-weight: 600; cursor: pointer;
+      transition: background 0.15s; font-family: inherit;
+    }
+
+    .btn-danger:hover { background: rgba(225,29,72,0.1); }
+    .error-text { color: #fb7185; font-size: 12px; }
+
+    /* Logo preview */
+    .logo-preview { display: flex; align-items: center; gap: 12px; }
+
+    .logo-thumb {
+      width: 48px; height: 48px; border-radius: 12px;
+      background: var(--surface-2); border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 24px; flex-shrink: 0; overflow: hidden;
+    }
+
+    .logo-thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .logo-inputs { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+
+    .btn-upload {
+      width: 100%;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text); border-radius: 10px;
+      padding: 8px; font-size: 12px; font-weight: 600;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      gap: 6px; transition: all 0.15s; font-family: inherit;
+    }
+
+    .btn-upload:hover { background: rgba(255,255,255,0.07); border-color: var(--border-hover); }
+    .btn-upload:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* Admin channel row */
+    .ch-row { display: flex; align-items: center; gap: 3px; }
+
+    .drag-handle {
+      padding: 6px; color: var(--text-3);
+      cursor: grab; flex-shrink: 0; display: flex; align-items: center;
+    }
+
+    .drag-handle:hover { color: var(--text-2); }
+
+    .edit-btn {
+      padding: 5px; border-radius: 7px;
+      background: transparent; border: none;
+      color: var(--text-3); cursor: pointer;
+      flex-shrink: 0; transition: all 0.15s;
+    }
+
+    .edit-btn:hover { background: var(--surface-2); color: var(--text); }
+
+    /* Admin bar */
+    #admin-bar {
+      padding: 12px;
+      border-top: 1px solid var(--border);
+      display: none;
+    }
+
+    /* Sidebar toggle */
+    #sidebar-toggle-btn { display: flex; }
+    @media (max-width: 767px) { #sidebar-toggle-btn { display: none; } }
+
+    /* ── MOBILE ── */
+    @media (max-width: 767px) {
+      #app { flex-direction: column; height: 100%; min-height: 100vh; overflow-y: auto; }
+
+      #sidebar {
+        width: 100%; min-width: 0;
+        border-left: none; border-top: 1px solid var(--border);
+        order: 2; height: auto; overflow: visible; flex-shrink: 0;
+      }
+
+      #main { order: 1; flex-shrink: 0; }
+
+      #player-wrap { flex: none; aspect-ratio: 16 / 9; height: auto; }
+
+      #channel-list { overflow-y: visible; padding: 8px; }
+
+      .ch-item { padding: 8px 10px; }
+      #topbar { padding: 8px 12px; }
+      #bottombar { padding: 8px 12px; }
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
+
+    ::-webkit-scrollbar { width: 3px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+    /* ── Color Picker Panel ── */
+    #color-panel-overlay {
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(0,0,0,0.5);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      display: none; align-items: stretch; justify-content: flex-end;
+    }
+    #color-panel-overlay.open { display: flex; }
+
+    #color-panel {
+      width: 340px; max-width: 100vw;
+      background: #0c0e18;
+      border-left: 1px solid var(--border-hover);
+      display: flex; flex-direction: column;
+      height: 100%;
+      animation: slideInRight 0.28s cubic-bezier(0.4,0,0.2,1);
+    }
+
+    @keyframes slideInRight {
+      from { transform: translateX(100%); opacity: 0; }
+      to   { transform: translateX(0);   opacity: 1; }
+    }
+
+    #color-panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 18px 14px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      background: linear-gradient(180deg, rgba(225,29,72,0.07) 0%, transparent 100%);
+    }
+
+    #color-panel-header h3 { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+
+    #color-panel-body {
+      flex: 1; overflow-y: auto; padding: 14px 14px 8px;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+
+    .color-row {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 13px;
+      transition: border-color 0.15s;
+    }
+    .color-row:hover { border-color: var(--border-hover); }
+
+    .color-row-top {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    .color-row-label { font-size: 12.5px; font-weight: 600; color: var(--text); }
+    .color-row-desc { font-size: 10.5px; color: var(--text-3); margin-top: 1px; }
+
+    .color-row-actions { display: flex; gap: 5px; align-items: center; }
+
+    .color-save-btn {
+      display: flex; align-items: center; gap: 4px;
+      padding: 5px 10px; border-radius: 7px;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
+      border: none; color: #fff; font-size: 10.5px; font-weight: 700;
+      cursor: pointer; transition: all 0.15s; font-family: inherit;
+    }
+    .color-save-btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+
+    .color-reset-btn {
+      display: flex; align-items: center;
+      padding: 5px 8px; border-radius: 7px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border);
+      color: var(--text-2); font-size: 10.5px;
+      cursor: pointer; transition: all 0.15s; font-family: inherit;
+    }
+    .color-reset-btn:hover { background: rgba(255,255,255,0.09); color: var(--text); }
+
+    .color-input-row {
+      display: flex; align-items: center; gap: 8px;
+    }
+
+    .color-swatch {
+      width: 36px; height: 36px; border-radius: 9px;
+      border: 2px solid rgba(255,255,255,0.12);
+      flex-shrink: 0; cursor: pointer;
+      overflow: hidden; position: relative;
+    }
+    .color-swatch input[type="color"] {
+      position: absolute; inset: -4px;
+      width: calc(100% + 8px); height: calc(100% + 8px);
+      border: none; background: none; outline: none;
+      cursor: pointer; padding: 0; opacity: 0;
+    }
+
+    .color-text-input {
+      flex: 1;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      border-radius: 9px; padding: 8px 10px;
+      font-size: 12px; color: var(--text);
+      outline: none; transition: border 0.15s;
+      font-family: 'Inter', monospace;
+    }
+    .color-text-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+
+    .color-saved-toast {
+      font-size: 10px; color: #4ade80; font-weight: 600;
+      opacity: 0; transition: opacity 0.3s; margin-left: 4px;
+    }
+    .color-saved-toast.show { opacity: 1; }
+
+    #color-panel-footer {
+      padding: 12px 14px;
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .btn-reset-all {
+      width: 100%; padding: 10px; border-radius: 10px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      color: var(--text-2); font-size: 12.5px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s; font-family: inherit;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    .btn-reset-all:hover { background: rgba(225,29,72,0.1); border-color: rgba(225,29,72,0.3); color: #fb7185; }
+  </style>
+</head>
+<body>
+
+<div id="app">
+  <!-- Main (player) comes first = left on desktop -->
+  <!-- Sidebar -->
+  <aside id="sidebar" style="order:2">
+    <div id="sidebar-header">
+      <span id="sidebar-title" style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;"><path d="M18.3636 3.5H5.63636C4.67194 3.5 3.74702 3.87707 3.06507 4.54825C2.38312 5.21943 2 6.12975 2 7.07895V14.2368C2 15.186 2.38312 16.0964 3.06507 16.7675C3.74702 17.4387 4.67194 17.8158 5.63636 17.8158H18.3636C19.3281 17.8158 20.253 17.4387 20.9349 16.7675C21.6169 16.0964 22 15.186 22 14.2368V7.07895C22 6.12975 21.6169 5.21943 20.9349 4.54825C20.253 3.87707 19.3281 3.5 18.3636 3.5ZM9.45455 8.42463V14.3084H7.68V8.42463H5.51636V7.07895H11.6564V8.42463H9.45455ZM16.2982 14.3084H14.3636L11.9182 7.07895H13.88L15.3345 12.3418L16.7927 7.07895H18.7709L16.2982 14.3084Z" fill="white"></path><path d="M6.5419 19.6053C6.5419 19.1111 6.94892 18.7105 7.45099 18.7105H16.5419C17.044 18.7105 17.451 19.1111 17.451 19.6053C17.451 20.0994 17.044 20.5 16.5419 20.5H7.45099C6.94892 20.5 6.5419 20.0994 6.5419 19.6053Z" fill="white"></path></svg>
+        <span id="site-name-text" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#fff;">Live</span>
+        <button id="site-name-edit-btn" onclick="openSiteNameEditor()" title="Edit site name" style="display:none;padding:3px 5px;border-radius:6px;background:transparent;border:none;color:#6b7280;cursor:pointer;flex-shrink:0;line-height:1;transition:all 0.15s;" onmouseover="this.style.background='#1f2937';this.style.color='#fff'" onmouseout="this.style.background='transparent';this.style.color='#6b7280'">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z"></path></svg>
+        </button>
+      </span>
+      <button class="icon-btn" id="settings-btn" title="Admin" onclick="openPasscode()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 010 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 010-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+      </button>
+    </div>
+    <div id="channel-list"><div id="loading">Loading...</div></div>
+    <div id="admin-bar">
+      <button class="btn-red" onclick="openAddChannel()" style="font-size:13px;padding:10px;">
+        + Add New Channel
+      </button>
+      <button onclick="openColorPanel()" style="margin-top:8px;width:100%;padding:10px;border-radius:10px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);color:#94a3b8;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;transition:all 0.15s;font-family:inherit;" onmouseover="this.style.background='rgba(255,255,255,0.08)';this.style.color='#f1f5f9'" onmouseout="this.style.background='rgba(255,255,255,0.04)';this.style.color='#94a3b8'">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13.5" cy="6.5" r="2.5"></circle><circle cx="19" cy="13" r="2.5"></circle><circle cx="6" cy="13" r="2.5"></circle><circle cx="10.5" cy="19.5" r="2.5"></circle><path stroke-linecap="round" stroke-linejoin="round" d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2z"></path></svg>
+        Color Customize
+      </button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div id="main" style="order:1">
+    <!-- Top bar -->
+    <div id="topbar">
+      <button class="icon-btn" id="sidebar-toggle-btn" onclick="toggleSidebar()" title="Toggle channel list">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"></path></svg>
+      </button>
+      <div id="now-playing">
+        <div id="now-playing-dot"></div>
+        <span id="now-playing-name">—</span>
+        <span id="now-playing-cat"></span>
+      </div>
+    </div>
+
+    <!-- Player -->
+    <div id="player-wrap">
+      <div id="player-inner" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#4b5563;font-size:14px;">
+        Select a channel
+      </div>
+    </div>
+
+    <!-- Bottom bar -->
+    <div id="bottombar">
+      <button class="nav-btn" onclick="navigate(-1)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 16.811c0 .864-.933 1.406-1.683.977l-7.108-4.061a1.125 1.125 0 010-1.954l7.108-4.061A1.125 1.125 0 0121 8.689v8.122zM11.25 16.811c0 .864-.933 1.406-1.683.977l-7.108-4.061a1.125 1.125 0 010-1.954l7.108-4.061a1.125 1.125 0 011.683.977v8.122z"></path></svg>
+        Prev
+      </button>
+      <span id="bottombar-name" style="font-size:12px;color:#6b7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+      <button class="nav-btn" onclick="navigate(1)">
+        Next
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 8.689c0-.864.933-1.406 1.683-.977l7.108 4.061a1.125 1.125 0 010 1.954l-7.108 4.061A1.125 1.125 0 013 16.811V8.69zM12.75 8.689c0-.864.933-1.406 1.683-.977l7.108 4.061a1.125 1.125 0 010 1.954l-7.108 4.061a1.125 1.125 0 01-1.683-.977V8.69z"></path></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ COLOR PANEL ═══════════ -->
+<div id="color-panel-overlay" onclick="if(event.target===this)closeColorPanel()">
+  <div id="color-panel">
+    <div id="color-panel-header">
+      <h3>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13.5" cy="6.5" r="2.5"></circle><circle cx="19" cy="13" r="2.5"></circle><circle cx="6" cy="13" r="2.5"></circle><circle cx="10.5" cy="19.5" r="2.5"></circle><path stroke-linecap="round" stroke-linejoin="round" d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2z"></path></svg>
+        Color Customize
+      </h3>
+      <button class="icon-btn" onclick="closeColorPanel()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg>
+      </button>
+    </div>
+    <div id="color-panel-body"></div>
+    <div id="color-panel-footer">
+      <button class="btn-reset-all" onclick="resetAllColors()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"></path></svg>
+        Reset All to Default
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ MODALS ═══════════ -->
+
+<!-- Passcode Modal -->
+<div id="passcode-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closePasscode()">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title">🔒 Admin Access</span>
+      <button class="icon-btn" onclick="closePasscode()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div>
+        <label>Enter your passcode</label>
+        <input type="password" id="passcode-input" placeholder="••••••••" onkeydown="if(event.key==='Enter')submitPasscode()" autofocus="">
+      </div>
+      <p id="passcode-error" class="error-text" style="display:none">Wrong Passcode</p>
+      <button class="btn-red" onclick="submitPasscode()">Go</button>
+    </div>
+  </div>
+</div>
+
+<!-- Channel Editor Modal -->
+<div id="editor-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeEditor()">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title" id="editor-title">Channel</span>
+      <button class="icon-btn" onclick="closeEditor()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="type-toggle">
+        <button class="type-btn active" id="type-hls" onclick="setType('hls')">🔗 URL Player</button>
+        <button class="type-btn" id="type-iframe" onclick="setType('iframe')">📺 iFrame Player</button>
+      </div>
+
+      <div>
+        <label>Channel Name *</label>
+        <input type="text" id="ed-name" placeholder="যেমন: T Sports">
+      </div>
+
+      <div>
+        <label>Category</label>
+        <input type="text" id="ed-category" placeholder="Sports">
+      </div>
+
+      <div>
+        <label>Country Flags — সর্বোচ্চ ৫টি flag image upload করুন</label>
+        <div class="flag-slots" id="flag-slots"></div>
+        <input type="file" id="flag-file-input" accept="image/*" style="display:none" onchange="handleFlagFileChange(event)">
+        <p class="flag-hint">প্রতিটি বক্সে ক্লিক করে flag image upload করুন · ছবিতে ক্লিক করলে ✕ দিয়ে remove হবে</p>
+      </div>
+
+      <div>
+        <label>Channel Logo</label>
+        <div class="logo-preview">
+          <div class="logo-thumb" id="logo-thumb">📡</div>
+          <div class="logo-inputs">
+            <input type="text" id="ed-logo" placeholder="Emoji (📡) বা image URL" oninput="updateLogoPreview()">
+            <button class="btn-upload" id="upload-btn" onclick="document.getElementById('logo-file').click()">
+              ⬆ Image Upload করুন
+            </button>
+            <input type="file" id="logo-file" accept="image/*" style="display:none" onchange="handleLogoUpload(event)">
+          </div>
+        </div>
+      </div>
+
+      <div id="url-field">
+        <label>Stream URL (m3u8)</label>
+        <input type="text" id="ed-url" placeholder="https://example.com/stream.m3u8">
+      </div>
+      <div id="iframe-field" style="display:none">
+        <label>iFrame Code অথবা src URL</label>
+        <textarea id="ed-iframe" rows="4" placeholder="<iframe src=&quot;//...&quot;></iframe>"></textarea>
+      </div>
+
+      <p id="editor-error" class="error-text" style="display:none"></p>
+      <button class="btn-red" id="save-btn" onclick="saveChannel()">Save Channel</button>
+      <button class="btn-danger" id="delete-btn" style="display:none" onclick="deleteCurrentChannel()">🗑 Delete Channel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ SCRIPT ═══════════ -->
+<script>
+// ── Firebase Config ──
+const firebaseConfig = {
+  apiKey: "AIzaSyBcR8zJrTkstjda22JEdVTaJ3FROmREdLA",
+  authDomain: "cinemabazar-600b0.firebaseapp.com",
+  projectId: "cinemabazar-600b0",
+  storageBucket: "cinemabazar-600b0.firebasestorage.app",
+  messagingSenderId: "62690080088",
+  appId: "1:62690080088:web:f4e7042fb4ad8248cce12d"
+};
+
+const PASSCODE = "rizviyankhan@gmail.com";
+const IMGBB_KEY = "9cf974acba9d5d5d715bf14db07d697a";
+
+const DEFAULT_CHANNELS = [
+  { id:"dsports-es-shaka", name:"DSports ES", category:"Sports", logo:"⚽", order:1, type:"iframe", embedUrl:"//cdn.stmify.com/embed/v1/dsports-es-shaka", streamUrl:"" },
+  { id:"cazetv-br-shaka", name:"Caze TV", category:"Sports · Brazil", logo:"📺", order:2, type:"iframe", embedUrl:"//cdn.stmify.com/embed-free/v1/cazetv-br-shaka", streamUrl:"" },
+  { id:"mono29-th-jw", name:"Mono 29", category:"Entertainment · Thailand", logo:"🎬", order:3, type:"iframe", embedUrl:"//cdn.stmify.com/embed-free/v1/mono29-th-jw", streamUrl:"" },
+  { id:"zee-bangla", name:"ZEE Bangla", category:"Entertainment · Bengali", logo:"🌟", order:4, type:"hls", streamUrl:"https://yupptvcatchupire.yuppcdn.net/preview/zeebangla/2500.m3u8", embedUrl:"" },
+  { id:"star-jalsha", name:"Star Jalsha", category:"Entertainment · Bengali", logo:"✨", order:5, type:"hls", streamUrl:"https://yupptvcatchupire.yuppcdn.net/preview/starjalsha/1800.m3u8", embedUrl:"" }
+];
+
+// ── State ──
+let channels = [];
+let selectedIdx = 0;
+let adminMode = false;
+let editingId = null;
+let currentType = 'hls';
+let hlsInstance = null;
+
+// ── Firebase Init ──
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const col = db.collection('channels');
+const settingsDoc = db.collection('settings').doc('site');
+
+// ── Site name ──
+function applySiteName(name) {
+  const n = (name || 'Live').trim();
+  document.getElementById('site-name-text').textContent = n;
+  document.title = n;
+}
+
+settingsDoc.get().then(doc => {
+  if (doc.exists && doc.data().siteName) applySiteName(doc.data().siteName);
+}).catch(() => {});
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('collapsed');
+}
+
+function openSiteNameEditor() {
+  const current = document.getElementById('site-name-text').textContent;
+  const newName = prompt('Website name পরিবর্তন করুন:', current);
+  if (newName === null) return;
+  const trimmed = newName.trim();
+  if (!trimmed) return;
+  applySiteName(trimmed);
+  settingsDoc.set({ siteName: trimmed }, { merge: true }).catch(() => {});
+}
+
+// ── Load channels ──
+col.orderBy('order', 'asc').onSnapshot(snap => {
+  if (snap.empty) { seedDefaults(); return; }
+  channels = snap.docs.map(d => ({ firestoreId: d.id, ...d.data() }));
+  renderList();
+  playChannel(selectedIdx);
+});
+
+async function seedDefaults() {
+  const batch = db.batch();
+  DEFAULT_CHANNELS.forEach(ch => batch.set(col.doc(), ch));
+  await batch.commit();
+}
+
+// ── Render ──
+function renderList() {
+  const list = document.getElementById('channel-list');
+  if (!channels.length) { list.innerHTML = '<div id="loading">No channels</div>'; return; }
+  list.innerHTML = channels.map((ch, idx) => {
+    const isActive = idx === selectedIdx;
+    const logoHtml = isLogoUrl(ch.logo)
+      ? `<div class="ch-logo"><img src="${ch.logo}" onerror="this.parentNode.textContent='📡'" /></div>`
+      : `<div class="ch-logo">${ch.logo || '📡'}</div>`;
+    const badge = isActive
+      ? `<div class="active-dot"></div>`
+      : `<span class="live-badge">LIVE</span>`;
+    const dragHandle = adminMode ? `<div class="drag-handle" draggable="false">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 9h16.5m-16.5 6.75h16.5"/></svg>
+    </div>` : '';
+    const editBtn = adminMode ? `<button class="edit-btn" onclick="openEditChannel(${idx});event.stopPropagation()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z"/></svg>
+    </button>` : '';
+
+    return `<div class="ch-row" data-idx="${idx}" ${adminMode ? `draggable="true" ondragstart="dndStart(${idx})" ondragenter="dndEnter(${idx});event.preventDefault()" ondragover="event.preventDefault()" ondrop="dndDrop()" ondragend="dndEnd()"` : ''}>
+      ${dragHandle}
+      <button class="ch-item ${isActive ? 'active' : ''}" onclick="selectChannel(${idx})">
+        ${logoHtml}
+        <div class="ch-info">
+          <div class="ch-name">${ch.name}</div>
+          <div class="ch-cat-row">
+            <span class="ch-cat">${ch.category}</span>${ch.flags ? ch.flags.split('|').filter(e=>e&&e.includes('http')).map(e=>{const[url,...rest]=e.split('::');const labelPart=rest.join('::');const[en,...bnArr]=labelPart.split('^^');const labelEn=(en||'').trim();const labelBn=bnArr.join('^^').trim();const hasLabel=labelEn||labelBn;return hasLabel?`<div class="ch-flag-wrap" data-en="${labelEn.replace(/"/g,'&quot;')}" data-bn="${labelBn.replace(/"/g,'&quot;')}" onmouseenter="showFlagTip(this)" onmouseleave="hideFlagTip(event)" onclick="pinFlagTip(this);event.stopPropagation()"><img class="ch-flag-img" src="${url}" alt="flag" /></div>`:`<img class="ch-flag-img" src="${url}" alt="flag" />`;}).join('') : ''}
+          </div>
+        </div>
+        ${badge}
+      </button>
+      ${editBtn}
+    </div>`;
+  }).join('');
+}
+
+function isLogoUrl(logo) {
+  return logo && (logo.startsWith('http') || logo.startsWith('//'));
+}
+
+// ── Play ──
+function selectChannel(idx) {
+  selectedIdx = idx;
+  renderList();
+  playChannel(idx);
+}
+
+function playChannel(idx) {
+  const ch = channels[idx];
+  if (!ch) return;
+
+  // Update top bar
+  document.getElementById('now-playing-name').textContent = ch.name;
+  document.getElementById('now-playing-cat').textContent = '· ' + ch.category;
+  document.getElementById('bottombar-name').textContent = ch.name;
+
+  // Destroy existing HLS
+  if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+
+  const wrap = document.getElementById('player-inner');
+
+  if (ch.type === 'hls' && ch.streamUrl) {
+    wrap.innerHTML = '<video id="hls-video" controls autoplay playsinline style="width:100%;height:100%;display:block;background:#000"></video>';
+    const video = document.getElementById('hls-video');
+    if (Hls.isSupported()) {
+      hlsInstance = new Hls();
+      hlsInstance.loadSource(ch.streamUrl);
+      hlsInstance.attachMedia(video);
+      hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(()=>{}));
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = ch.streamUrl;
+      video.play().catch(()=>{});
+    }
+  } else if (ch.type === 'iframe' && ch.embedUrl) {
+    const src = ch.embedUrl.startsWith('//') ? 'https:' + ch.embedUrl : ch.embedUrl;
+    wrap.innerHTML = `<iframe src="${src}" width="100%" height="100%" style="border:none;display:block" allow="encrypted-media;fullscreen;autoplay" allowfullscreen scrolling="no"></iframe>`;
+  } else {
+    wrap.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;color:#4b5563;font-size:14px">No stream</div>';
+  }
+}
+
+// ── Navigation ──
+function navigate(dir) {
+  if (!channels.length) return;
+  selectedIdx = (selectedIdx + dir + channels.length) % channels.length;
+  renderList();
+  playChannel(selectedIdx);
+}
+
+// ── Passcode ──
+function openPasscode() {
+  if (adminMode) { adminMode = false; document.getElementById('admin-bar').style.display = 'none'; document.getElementById('site-name-edit-btn').style.display = 'none'; renderList(); return; }
+  document.getElementById('passcode-modal').style.display = 'flex';
+  document.getElementById('passcode-input').value = '';
+  document.getElementById('passcode-error').style.display = 'none';
+  setTimeout(() => document.getElementById('passcode-input').focus(), 100);
+}
+
+function closePasscode() { document.getElementById('passcode-modal').style.display = 'none'; }
+
+function submitPasscode() {
+  const val = document.getElementById('passcode-input').value.trim().toLowerCase();
+  if (val === PASSCODE.toLowerCase()) {
+    adminMode = true;
+    document.getElementById('admin-bar').style.display = 'block';
+    document.getElementById('site-name-edit-btn').style.display = 'inline-flex';
+    closePasscode();
+    renderList();
+  } else {
+    document.getElementById('passcode-error').style.display = 'block';
+    document.getElementById('passcode-input').value = '';
+  }
+}
+
+// ── Channel Editor ──
+function openAddChannel() {
+  editingId = null;
+  document.getElementById('editor-title').textContent = 'Add New Channel';
+  document.getElementById('ed-name').value = '';
+  document.getElementById('ed-category').value = '';
+  document.getElementById('ed-logo').value = '';
+  document.getElementById('ed-url').value = '';
+  document.getElementById('ed-iframe').value = '';
+  flagImages = [];
+  document.getElementById('editor-error').style.display = 'none';
+  document.getElementById('delete-btn').style.display = 'none';
+  setType('hls');
+  updateLogoPreview();
+  renderFlagSlots();
+  document.getElementById('editor-modal').style.display = 'flex';
+}
+
+function openEditChannel(idx) {
+  const ch = channels[idx];
+  editingId = ch.firestoreId;
+  document.getElementById('editor-title').textContent = 'Edit: ' + ch.name;
+  document.getElementById('ed-name').value = ch.name;
+  document.getElementById('ed-category').value = ch.category;
+  document.getElementById('ed-logo').value = ch.logo;
+  flagImages = ch.flags ? ch.flags.split('|').filter(e => e && e.includes('http')).map(e => {
+    const [url, ...rest] = e.split('::');
+    const labelPart = rest.join('::');
+    const [labelEn, ...bnParts] = labelPart.split('^^');
+    return { url: url.trim(), labelEn: labelEn.trim(), labelBn: bnParts.join('^^').trim() };
+  }) : [];
+  document.getElementById('editor-error').style.display = 'none';
+  document.getElementById('delete-btn').style.display = 'block';
+  setType(ch.type);
+  if (ch.type === 'hls') {
+    document.getElementById('ed-url').value = ch.streamUrl;
+  } else {
+    document.getElementById('ed-iframe').value = ch.embedUrl;
+  }
+  updateLogoPreview();
+  renderFlagSlots();
+  document.getElementById('editor-modal').style.display = 'flex';
+}
+
+function closeEditor() { document.getElementById('editor-modal').style.display = 'none'; }
+
+function setType(t) {
+  currentType = t;
+  document.getElementById('type-hls').className = 'type-btn' + (t === 'hls' ? ' active' : '');
+  document.getElementById('type-iframe').className = 'type-btn' + (t === 'iframe' ? ' active' : '');
+  document.getElementById('url-field').style.display = t === 'hls' ? 'block' : 'none';
+  document.getElementById('iframe-field').style.display = t === 'iframe' ? 'block' : 'none';
+}
+
+// ── Flag image helpers ──
+// flagImages: array of {url, label} objects (max 5)
+let flagImages = [];
+let flagUploadingSlot = null;
+
+function renderFlagSlots() {
+  const container = document.getElementById('flag-slots');
+  if (!container) return;
+  let html = '';
+  for (let i = 0; i < 5; i++) {
+    const item = flagImages[i];
+    if (item) {
+      html += `<div class="flag-slot-group">
+        <div class="flag-slot">
+          <img src="${item.url}" alt="flag ${i+1}" />
+          <div class="slot-remove" onclick="removeFlagImage(${i});event.stopPropagation()">✕</div>
+        </div>
+        <div class="flag-label-inputs">
+          <input class="flag-label-input" type="text" placeholder="English"
+            value="${item.labelEn || ''}"
+            oninput="updateFlagLabel(${i},'en',this.value)"
+            onclick="event.stopPropagation()" />
+          <input class="flag-label-input" type="text" placeholder="বাংলা"
+            value="${item.labelBn || ''}"
+            oninput="updateFlagLabel(${i},'bn',this.value)"
+            onclick="event.stopPropagation()" />
+        </div>
+      </div>`;
+    } else if (i === flagImages.length) {
+      html += `<div class="flag-slot-group">
+        <div class="flag-slot" onclick="triggerFlagUpload(${i})" title="Flag upload করুন">
+          <span class="slot-add">+</span>
+        </div>
+      </div>`;
+    } else {
+      break;
+    }
+  }
+  container.innerHTML = html;
+}
+
+function triggerFlagUpload(slotIdx) {
+  flagUploadingSlot = slotIdx;
+  const inp = document.getElementById('flag-file-input');
+  inp.value = '';
+  inp.click();
+}
+
+async function handleFlagFileChange(event) {
+  const file = event.target.files[0];
+  if (!file || flagUploadingSlot === null) return;
+  const idx = flagUploadingSlot;
+  flagUploadingSlot = null;
+
+  const groups = document.querySelectorAll('.flag-slot-group');
+  if (groups[idx]) groups[idx].querySelector('.flag-slot').innerHTML = '<div class="slot-spinner">⏳</div>';
+
+  try {
+    const form = new FormData();
+    form.append('image', file);
+    const res = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_KEY}`, { method: 'POST', body: form });
+    const data = await res.json();
+    if (data.success) {
+      flagImages[idx] = { url: data.data.url, label: '' };
+    } else {
+      throw new Error('Upload failed');
+    }
+  } catch(e) {
+    showEditorError('Flag image upload failed. আবার চেষ্টা করুন।');
+  }
+  renderFlagSlots();
+}
+
+function updateFlagLabel(idx, lang, val) {
+  if (!flagImages[idx]) return;
+  const clean = val.replace(/[|^]/g, '');
+  if (lang === 'en') flagImages[idx].labelEn = clean;
+  else flagImages[idx].labelBn = clean;
+}
+
+function removeFlagImage(idx) {
+  flagImages.splice(idx, 1);
+  renderFlagSlots();
+}
+
+let _tipPinned = false;
+let _tipTarget = null;
+
+function _positionTip(el) {
+  const tip = document.getElementById('flag-tooltip');
+  const rect = el.getBoundingClientRect();
+  const tipW = tip.offsetWidth || 160;
+  const gap = 8;
+  let left = rect.left + rect.width / 2 - tipW / 2;
+  if (left < 8) left = 8;
+  if (left + tipW > window.innerWidth - 8) left = window.innerWidth - tipW - 8;
+  const top = rect.top - tip.offsetHeight - gap;
+  tip.style.left = left + 'px';
+  tip.style.top = top + 'px';
+  const arrowLeft = (rect.left + rect.width / 2) - left;
+  tip.style.setProperty('--arrow-left', arrowLeft + 'px');
+}
+
+function showFlagTip(el) {
+  if (_tipPinned) return;
+  const en = el.dataset.en || '';
+  const bn = el.dataset.bn || '';
+  const tip = document.getElementById('flag-tooltip');
+  tip.innerHTML = (en ? `<span class="tip-en">${en}</span>` : '') + (bn ? `<span class="tip-bn">${bn}</span>` : '');
+  tip.classList.add('visible');
+  _tipTarget = el;
+  requestAnimationFrame(() => _positionTip(el));
+}
+
+function hideFlagTip(e) {
+  if (_tipPinned) return;
+  const tip = document.getElementById('flag-tooltip');
+  tip.classList.remove('visible');
+  _tipTarget = null;
+}
+
+function pinFlagTip(el) {
+  const tip = document.getElementById('flag-tooltip');
+  if (_tipPinned && _tipTarget === el) {
+    _tipPinned = false;
+    _tipTarget = null;
+    tip.classList.remove('visible');
+    return;
+  }
+  const en = el.dataset.en || '';
+  const bn = el.dataset.bn || '';
+  tip.innerHTML = (en ? `<span class="tip-en">${en}</span>` : '') + (bn ? `<span class="tip-bn">${bn}</span>` : '');
+  tip.classList.add('visible');
+  _tipPinned = true;
+  _tipTarget = el;
+  requestAnimationFrame(() => _positionTip(el));
+}
+
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.ch-flag-wrap')) {
+    _tipPinned = false;
+    _tipTarget = null;
+    document.getElementById('flag-tooltip').classList.remove('visible');
+  }
+});
+
+function updateLogoPreview() {
+  const logo = document.getElementById('ed-logo').value.trim();
+  const thumb = document.getElementById('logo-thumb');
+  if (isLogoUrl(logo)) {
+    thumb.innerHTML = `<img src="${logo}" onerror="this.parentNode.textContent='📡'" />`;
+  } else {
+    thumb.textContent = logo || '📡';
+  }
+}
+
+async function handleLogoUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const btn = document.getElementById('upload-btn');
+  btn.textContent = 'Uploading...';
+  btn.disabled = true;
+  try {
+    const form = new FormData();
+    form.append('image', file);
+    const res = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_KEY}`, { method:'POST', body:form });
+    const data = await res.json();
+    document.getElementById('ed-logo').value = data.data.url;
+    updateLogoPreview();
+  } catch(e) {
+    showEditorError('Image upload failed. Try again.');
+  } finally {
+    btn.innerHTML = '⬆ Image Upload করুন';
+    btn.disabled = false;
+    event.target.value = '';
+  }
+}
+
+async function saveChannel() {
+  const name = document.getElementById('ed-name').value.trim();
+  const category = document.getElementById('ed-category').value.trim() || 'Custom';
+  const logo = document.getElementById('ed-logo').value.trim() || '📡';
+  const rawUrl = currentType === 'hls'
+    ? document.getElementById('ed-url').value.trim()
+    : document.getElementById('ed-iframe').value.trim();
+
+  if (!name) { showEditorError('Channel name দিন'); return; }
+  if (!rawUrl) { showEditorError(currentType === 'iframe' ? 'iFrame code দিন' : 'Stream URL দিন'); return; }
+
+  const embedSrc = rawUrl.match(/src=["']([^"']+)["']/) ? rawUrl.match(/src=["']([^"']+)["']/)[1] : rawUrl;
+  const btn = document.getElementById('save-btn');
+  btn.disabled = true; btn.textContent = 'Saving...';
+
+  try {
+    const data = {
+      name, category, logo,
+      flags: flagImages.map(f => {
+        const en = (f.labelEn || '').trim();
+        const bn = (f.labelBn || '').trim();
+        if (!en && !bn) return f.url;
+        return `${f.url}::${en}^^${bn}`;
+      }).join('|'),
+      type: currentType,
+      streamUrl: currentType === 'hls' ? rawUrl : '',
+      embedUrl: currentType === 'iframe' ? embedSrc : ''
+    };
+
+    if (editingId) {
+      await col.doc(editingId).update(data);
+    } else {
+      const maxOrder = channels.reduce((m, c) => Math.max(m, c.order || 0), 0);
+      await col.add({ ...data, id: Date.now().toString(), order: maxOrder + 1 });
+    }
+    closeEditor();
+  } catch(e) {
+    showEditorError('Save failed. Try again.');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save Channel';
+  }
+}
+
+async function deleteCurrentChannel() {
+  if (!editingId) return;
+  const ch = channels.find(c => c.firestoreId === editingId);
+  if (!confirm(`"${ch?.name}" delete করবেন?`)) return;
+  await col.doc(editingId).delete();
+  selectedIdx = 0;
+  closeEditor();
+}
+
+function showEditorError(msg) {
+  const el = document.getElementById('editor-error');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+// ── Drag & Drop ──
+let dragFrom = null;
+
+function dndStart(idx) { dragFrom = idx; }
+
+function dndEnter(idx) {
+  if (dragFrom === null || dragFrom === idx) return;
+  const reordered = [...channels];
+  const [moved] = reordered.splice(dragFrom, 1);
+  reordered.splice(idx, 0, moved);
+  channels = reordered;
+  if (selectedIdx === dragFrom) selectedIdx = idx;
+  dragFrom = idx;
+  renderList();
+}
+
+async function dndDrop() {
+  const batch = db.batch();
+  channels.forEach((ch, i) => batch.update(col.doc(ch.firestoreId), { order: i + 1 }));
+  await batch.commit();
+}
+
+function dndEnd() { dragFrom = null; }
+
+// ── Color Customize ──
+const COLOR_VARS = [
+  { key: '--accent',       name: 'Accent Color',       desc: 'Buttons, active channel, highlights',     def: '#e11d48', type: 'hex' },
+  { key: '--accent-dark',  name: 'Accent Dark',        desc: 'Hover state of accent color',             def: '#be123c', type: 'hex' },
+  { key: '--accent-glow',  name: 'Accent Glow',        desc: 'Shadow glow around accent elements',      def: 'rgba(225,29,72,0.25)', type: 'text' },
+  { key: '--bg',           name: 'Background',         desc: 'Main page background color',              def: '#07080f', type: 'hex' },
+  { key: '--surface',      name: 'Sidebar Background', desc: 'Channel list sidebar background',         def: '#0e1018', type: 'hex' },
+  { key: '--surface-2',    name: 'Card Surface',       desc: 'Hover backgrounds & input fields',        def: 'rgba(255,255,255,0.04)', type: 'text' },
+  { key: '--border',       name: 'Border',             desc: 'Dividers and outlines',                   def: 'rgba(255,255,255,0.07)', type: 'text' },
+  { key: '--border-hover', name: 'Border Hover',       desc: 'Brighter borders on hover/focus',         def: 'rgba(255,255,255,0.13)', type: 'text' },
+  { key: '--text',         name: 'Primary Text',       desc: 'Channel names, headings',                 def: '#f1f5f9', type: 'hex' },
+  { key: '--text-2',       name: 'Secondary Text',     desc: 'Categories, labels',                      def: '#94a3b8', type: 'hex' },
+  { key: '--text-3',       name: 'Muted Text',         desc: 'Placeholders, subtle hints',              def: '#475569', type: 'hex' },
+];
+
+const colorsDoc = db.collection('settings').doc('colors');
+let savedColors = {};
+
+function applyColors(obj) {
+  const root = document.documentElement;
+  COLOR_VARS.forEach(v => {
+    if (obj[v.key]) root.style.setProperty(v.key, obj[v.key]);
+  });
+}
+
+colorsDoc.get().then(doc => {
+  if (doc.exists) { savedColors = doc.data(); applyColors(savedColors); }
+}).catch(() => {});
+
+function openColorPanel() {
+  renderColorPanel();
+  document.getElementById('color-panel-overlay').classList.add('open');
+}
+
+function closeColorPanel() {
+  document.getElementById('color-panel-overlay').classList.remove('open');
+}
+
+function getCurrentColor(key) {
+  return savedColors[key] || COLOR_VARS.find(v => v.key === key)?.def || '';
+}
+
+function renderColorPanel() {
+  const body = document.getElementById('color-panel-body');
+  body.innerHTML = COLOR_VARS.map(v => {
+    const cur = getCurrentColor(v.key);
+    const swatchBg = cur;
+    const isHex = v.type === 'hex';
+    return `<div class="color-row">
+      <div class="color-row-top">
+        <div>
+          <div class="color-row-label">${v.name}</div>
+          <div class="color-row-desc">${v.desc}</div>
+        </div>
+        <div class="color-row-actions">
+          <span class="color-saved-toast" id="toast-${v.key.replace(/-/g,'_')}">✓ Saved</span>
+          <button class="color-reset-btn" onclick="resetOneColor('${v.key}')" title="Default এ ফিরুন">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>
+          </button>
+          <button class="color-save-btn" onclick="saveOneColor('${v.key}')">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
+            Save
+          </button>
+        </div>
+      </div>
+      <div class="color-input-row">
+        <div class="color-swatch" id="swatch-${v.key.replace(/-/g,'_')}" style="background:${swatchBg}">
+          ${isHex ? `<input type="color" id="cpicker-${v.key.replace(/-/g,'_')}" value="${cur}" oninput="onColorPickerChange('${v.key}',this.value)" />` : ''}
+        </div>
+        <input class="color-text-input" id="ctxt-${v.key.replace(/-/g,'_')}" type="text" value="${cur}" placeholder="${v.def}" oninput="onColorTextChange('${v.key}',this.value)" />
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function onColorPickerChange(key, val) {
+  const id = key.replace(/-/g,'_');
+  document.getElementById('ctxt-' + id).value = val;
+  document.getElementById('swatch-' + id).style.background = val;
+  document.documentElement.style.setProperty(key, val);
+}
+
+function onColorTextChange(key, val) {
+  const id = key.replace(/-/g,'_');
+  document.getElementById('swatch-' + id).style.background = val;
+  document.documentElement.style.setProperty(key, val);
+  const v = COLOR_VARS.find(x => x.key === key);
+  if (v && v.type === 'hex') {
+    const picker = document.getElementById('cpicker-' + id);
+    if (picker && /^#[0-9a-fA-F]{6}$/.test(val)) picker.value = val;
+  }
+}
+
+async function saveOneColor(key) {
+  const id = key.replace(/-/g,'_');
+  const val = document.getElementById('ctxt-' + id).value.trim();
+  if (!val) return;
+  savedColors[key] = val;
+  document.documentElement.style.setProperty(key, val);
+  try {
+    await colorsDoc.set({ [key]: val }, { merge: true });
+    const toast = document.getElementById('toast-' + id);
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 1800);
+  } catch(e) {}
+}
+
+function resetOneColor(key) {
+  const v = COLOR_VARS.find(x => x.key === key);
+  if (!v) return;
+  const id = key.replace(/-/g,'_');
+  delete savedColors[key];
+  document.getElementById('ctxt-' + id).value = v.def;
+  document.getElementById('swatch-' + id).style.background = v.def;
+  if (v.type === 'hex') {
+    const picker = document.getElementById('cpicker-' + id);
+    if (picker) picker.value = v.def;
+  }
+  document.documentElement.style.setProperty(key, v.def);
+  colorsDoc.set({ [key]: firebase.firestore.FieldValue.delete() }, { merge: true }).catch(() => {});
+}
+
+async function resetAllColors() {
+  if (!confirm('সব color default এ ফিরিয়ে দেবেন?')) return;
+  savedColors = {};
+  const root = document.documentElement;
+  COLOR_VARS.forEach(v => root.style.setProperty(v.key, v.def));
+  try {
+    const delObj = {};
+    COLOR_VARS.forEach(v => delObj[v.key] = firebase.firestore.FieldValue.delete());
+    await colorsDoc.set(delObj, { merge: true });
+  } catch(e) {}
+  renderColorPanel();
+}
+</script>
+<div id="flag-tooltip"></div>
+
+
+<script src="../replit-cdn.com/replit-pill/replit-pill.global.js" data-referral-code="6pb9xufoy46n" data-repl-id="5ed39830-f3b0-4b84-b0e0-22bf9acf087b"></script></body></html>
